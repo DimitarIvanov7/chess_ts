@@ -1,4 +1,4 @@
-import { CountdownTimer } from '../classes';
+import { CountdownTimer, Piece } from '../classes';
 
 enum pieceTypes {
   'pawn' = 'pawn',
@@ -62,35 +62,6 @@ enum colors {
   'white' = 'white',
 }
 
-interface Piece {
-  id: string;
-  type: pieceTypes;
-  color: colors;
-  isMoved: boolean;
-
-  isTaken: boolean;
-
-  imgUrl: string;
-
-  getAvailiableMovementDirections(
-    type?: pieceTypes,
-    isAttack?: boolean
-  ): AvailiableMovementDirections;
-
-  getLegalMoves(
-    rowIndex: number,
-    colIndex: number,
-    gameState: Board,
-    isAttack?: boolean,
-    type?: pieceTypes
-  ): coordinates[];
-}
-
-interface PieceWithCoordinates {
-  piece: Piece | null;
-  coordinates: coordinates;
-}
-
 type BoardSquare = {
   color: colors;
   piece: Piece | null;
@@ -109,16 +80,9 @@ interface Player {
   kingRowIndex: number;
   kingColIndex: number;
 
-  attackers: {
-    coordinate: coordinates;
-    type: pieceTypes;
-  }[];
+  attackers: Piece[];
 
-  getLegalMoves(
-    rowIndex: number,
-    colIndex: number,
-    type: pieceTypes
-  ): coordinates[];
+  getLegalMoves(rowIndex: number, colIndex: number): coordinates[];
 
   move(
     prevRowIndex: number,
@@ -131,10 +95,7 @@ interface Player {
 
   selectPiece(rowIndex: number, colIndex: number): coordinates[];
 
-  getKingAttackers(): {
-    coordinate: coordinates;
-    type: pieceTypes;
-  }[];
+  getAttackers(row: number, col: number): Piece[];
 }
 
 interface Game {
@@ -168,7 +129,6 @@ interface Game {
 }
 
 export {
-  Piece,
   Game,
   Player,
   colors,
@@ -176,7 +136,6 @@ export {
   Board,
   BoardSquare,
   coordinates,
-  PieceWithCoordinates,
   Directions,
   DirectionWithSteps,
   MovementTypes,

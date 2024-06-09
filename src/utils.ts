@@ -1,18 +1,14 @@
-import { BoardSquareImpl, PieceImpl } from './classes';
+import { BoardSquareImpl, Piece } from './classes';
 import {
-  AvailiableMovementDirections,
   Board,
   BoardSquare,
   Directions,
-  MovementTypes,
-  Piece,
-  PieceWithCoordinates,
   colors,
   coordinates,
   pieceTypes,
 } from './interfaces';
 
-const opositeDirections: {
+const oppositeDirections: {
   [key in Directions]: Directions;
 } = {
   [Directions.down]: Directions.up,
@@ -34,12 +30,12 @@ const directionToSearchFunctionMapping: {
   }),
   [Directions.downRight]: (coordinates) => ({
     col: coordinates.col + 1,
-    row: coordinates.row - 1,
+    row: coordinates.row + 1,
   }),
 
   [Directions.downLeft]: (coordinates) => ({
     col: coordinates.col - 1,
-    row: coordinates.row - 1,
+    row: coordinates.row + 1,
   }),
 
   [Directions.left]: (coordinates) => ({
@@ -58,12 +54,12 @@ const directionToSearchFunctionMapping: {
   }),
   [Directions.upLeft]: (coordinates) => ({
     col: coordinates.col - 1,
-    row: coordinates.row + 1,
+    row: coordinates.row - 1,
   }),
 
   [Directions.upRight]: (coordinates) => ({
     col: coordinates.col + 1,
-    row: coordinates.row + 1,
+    row: coordinates.row - 1,
   }),
 };
 
@@ -145,7 +141,8 @@ const createInitialBoard = () => {
 
       const currentSquare: BoardSquare = new BoardSquareImpl(
         squareColor,
-        currentPiece?.type !== pieceTypes.pawn ? currentPiece : null
+        // currentPiece?.type !== pieceTypes.pawn ? currentPiece : null
+        currentPiece
       );
 
       //TODO: remove that, it is for dev testing
@@ -160,19 +157,23 @@ const createInitialBoard = () => {
 };
 
 const createPiece = (rowIndex: number, colIndex: number) => {
-  let currentPiece: PieceImpl | null = null;
+  let currentPiece: Piece | null = null;
 
   let pieceColor =
     rowIndex < 2 ? colors.white : rowIndex > 5 ? colors.black : null;
 
   if (rowIndex === 1 || rowIndex === 6) {
-    currentPiece = new PieceImpl(pieceColor!, pieceTypes.pawn);
+    currentPiece = new Piece(pieceColor!, pieceTypes.pawn, {
+      row: rowIndex,
+      col: colIndex,
+    });
   }
 
   if (rowIndex === 0 || rowIndex === 7) {
-    currentPiece = new PieceImpl(
+    currentPiece = new Piece(
       pieceColor!,
-      columnIndexTopieceTypesToMapping[colIndex]
+      columnIndexTopieceTypesToMapping[colIndex],
+      { row: rowIndex, col: colIndex }
     );
   }
 
@@ -201,7 +202,7 @@ const getPieceByCoordinates = (
 const areCoordinatesInBounds = ({ row, col }: coordinates) =>
   row >= 0 && row < 8 && col >= 0 && col < 8;
 
-const searchForPiece = (
+const searchForPieceCoordinates = (
   gameState: Board,
   row: number,
   col: number,
@@ -226,8 +227,8 @@ const searchForPiece = (
 
 const getCoordinatesPathArray = (
   startCoordinates: coordinates,
-  direction: Directions,
-  endCoordinates: coordinates
+  endCoordinates: coordinates,
+  direction: Directions
 ): coordinates[] => {
   const result: coordinates[] = [];
 
@@ -254,7 +255,7 @@ const getPreviousCoordinates = (
   coordinates: coordinates,
   direction: Directions
 ): coordinates =>
-  directionToSearchFunctionMapping[opositeDirections[direction]](coordinates);
+  directionToSearchFunctionMapping[oppositeDirections[direction]](coordinates);
 
 const getVisiblePiecesCoordinates = (
   gameState: Board,
@@ -262,7 +263,12 @@ const getVisiblePiecesCoordinates = (
   coordinates: coordinates
 ): coordinates[] =>
   directions.map((direction) =>
-    searchForPiece(gameState, coordinates.row, coordinates.col, direction)
+    searchForPieceCoordinates(
+      gameState,
+      coordinates.row,
+      coordinates.col,
+      direction
+    )
   );
 
 const getAvaiableSquare = (
@@ -278,7 +284,7 @@ const getAvaiableSquare = (
 
   if (!piece && onlyAttack) return null;
 
-  if (piece && !onlyAttack) return null;
+  // if (piece && !onlyAttack) return null;
 
   return piece?.color === color
     ? !withoutPrevious
@@ -321,13 +327,42 @@ const getCoordinatesByPath = (
   return { row, col };
 };
 
+// 1 - 1 : 0 - 2
+
+//3-0 : 7 - 4
+
+const getCoordinatesRelation = (
+  startCoordinates: coordinates,
+  endCoordinates: coordinates
+): Directions | null => {
+  const rowDifference = startCoordinates.row - endCoordinates.row;
+  const colDifference = startCoordinates.col - endCoordinates.col;
+
+  if (Math.abs(rowDifference) === Math.abs(colDifference)) {
+    if (rowDifference > 0) {
+      return colDifference > 0 ? Directions.upLeft : Directions.upRight;
+    }
+
+    return colDifference > 0 ? Directions.downLeft : Directions.downRight;
+  }
+
+  if (rowDifference === 0 && colDifference === 0) return null;
+
+  if (rowDifference !== 0 && colDifference !== 0) return null;
+
+  if (rowDifference === 0 && colDifference !== 0)
+    return colDifference > 0 ? Directions.left : Directions.right;
+
+  return rowDifference > 0 ? Directions.down : Directions.up;
+};
+
 export {
   createInitialBoard,
   createPieceImageUrl,
   createPiece,
   columnIndexTopieceTypesToMapping,
   getPieceByCoordinates,
-  searchForPiece,
+  searchForPieceCoordinates,
   getPreviousCoordinates,
   getAvaiableSquare,
   getVisiblePiecesCoordinates,
@@ -336,4 +371,6 @@ export {
   getSquareByCoordinates,
   getCoordinatesByPath,
   directionToKnightPositionMapping,
+  getCoordinatesRelation,
+  oppositeDirections,
 };

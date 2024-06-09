@@ -2,11 +2,9 @@ import {
   AvailiableMovementDirections,
   Board,
   BoardSquare,
-  DirectionWithSteps,
   Directions,
   Game,
   MovementTypes,
-  Piece,
   Player,
   colors,
   coordinates,
@@ -21,9 +19,11 @@ import {
   getCoordinatesByDirection,
   getCoordinatesByPath,
   getCoordinatesPathArray,
+  getCoordinatesRelation,
   getPieceByCoordinates,
   getPreviousCoordinates,
-  searchForPiece,
+  oppositeDirections,
+  searchForPieceCoordinates,
 } from '../utils';
 
 class BoardSquareImpl implements BoardSquare {
@@ -44,10 +44,7 @@ class PlayerImlp implements Player {
   isInCheck: boolean;
   kingRowIndex: number;
   kingColIndex: number;
-  attackers: {
-    coordinate: coordinates;
-    type: pieceTypes;
-  }[];
+  attackers: Piece[];
 
   constructor(game: GameImpl, color: colors) {
     this.game = game;
@@ -60,11 +57,7 @@ class PlayerImlp implements Player {
     this.attackers = [];
   }
 
-  getLegalMoves(
-    row: number,
-    col: number,
-    pieceType?: pieceTypes
-  ): coordinates[] {
+  getLegalMoves(row: number, col: number): coordinates[] {
     const selectedPiece = getPieceByCoordinates(this.game.state, {
       row,
       col,
@@ -72,13 +65,103 @@ class PlayerImlp implements Player {
 
     if (!selectedPiece) return [];
 
-    const type = pieceType || selectedPiece.type;
+    const type = selectedPiece.type;
 
     const gameState = this.game.state;
 
     if (this.attackers.length > 1 && type !== pieceTypes.king) return [];
 
-    return selectedPiece.getLegalMoves(row, col, gameState);
+    let legalMoves = selectedPiece.getLegalMoves(gameState);
+
+    if (this.attackers.length) {
+      const attackingCoordinatesPath: coordinates[] = [];
+
+      const startCoordinates: coordinates = {
+        row: this.kingRowIndex,
+        col: this.kingColIndex,
+      };
+
+      const endCoordinates: coordinates = this.attackers[0].coordinates;
+
+      const attackerDirection = getCoordinatesRelation(
+        startCoordinates,
+        endCoordinates
+      );
+
+      if (!attackerDirection) {
+        attackingCoordinatesPath.push(this.attackers[0].coordinates);
+      } else {
+        attackingCoordinatesPath.push(
+          ...getCoordinatesPathArray(
+            startCoordinates,
+            endCoordinates,
+            attackerDirection
+          )
+        );
+
+        if (type !== pieceTypes.king) {
+          legalMoves = legalMoves.filter(({ row, col }) =>
+            attackingCoordinatesPath.find(
+              (attackerCoordinates) =>
+                attackerCoordinates.row === row &&
+                attackerCoordinates.col === col
+            )
+          );
+        } else
+          legalMoves = legalMoves.filter(({ row, col }) =>
+            attackingCoordinatesPath.find(
+              (attackerCoordinates) =>
+                attackerCoordinates.row !== row &&
+                attackerCoordinates.col !== col
+            )
+          );
+      }
+    }
+
+    if (selectedPiece.type !== pieceTypes.king) {
+      const kingAttacker = this.getPossibleKingAttacker(selectedPiece);
+
+      const kingDirection = getCoordinatesRelation(selectedPiece.coordinates, {
+        row: this.kingRowIndex,
+        col: this.kingColIndex,
+      });
+
+      const attackingSquares =
+        kingAttacker && kingDirection
+          ? getCoordinatesPathArray(
+              { col: this.kingColIndex, row: this.kingRowIndex },
+              kingAttacker.coordinates,
+              oppositeDirections[kingDirection]
+            ).filter(
+              ({ col, row }) =>
+                !(
+                  col === selectedPiece.coordinates.col &&
+                  row === selectedPiece.coordinates.row
+                )
+            )
+          : [];
+
+      legalMoves = attackingSquares.length
+        ? legalMoves.filter(({ row, col }) =>
+            attackingSquares.find(
+              (attackerCoordinates) =>
+                attackerCoordinates.row === row &&
+                attackerCoordinates.col === col
+            )
+          )
+        : legalMoves;
+    }
+
+    legalMoves =
+      type === pieceTypes.king
+        ? legalMoves.filter(({ row, col }) => {
+            const attackers = this.getAttackers(row, col);
+
+            return attackers.length === 0;
+          })
+        : legalMoves;
+
+    return legalMoves;
   }
 
   selectPiece(rowIndex: number, colIndex: number): coordinates[] {
@@ -105,6 +188,8 @@ class PlayerImlp implements Player {
 
     if (!selectedPiece) return;
 
+    selectedPiece.coordinates = { row: rowIndex, col: colIndex };
+
     if (selectedPiece.type === pieceTypes.king) {
       this.kingColIndex = colIndex;
       this.kingRowIndex = rowIndex;
@@ -118,7 +203,7 @@ class PlayerImlp implements Player {
   updateGame(game: GameImpl): void {
     this.game = game;
 
-    const attackers = this.getKingAttackers();
+    const attackers = this.getAttackers(this.kingRowIndex, this.kingColIndex);
 
     if (attackers.length > 0) {
       this.attackers = attackers;
@@ -129,45 +214,93 @@ class PlayerImlp implements Player {
     }
   }
 
-  getKingAttackers() {
+  getAttackers(row: number, col: number): Piece[] {
     const attackingPieceTypes: pieceTypes[] = Object.values(pieceTypes);
 
-    const possibleAttackers = attackingPieceTypes
+    const attackers: Piece[] = attackingPieceTypes
       .map((pieceType) => ({
-        coordinates: this.getLegalMoves(
-          this.kingRowIndex,
-          this.kingColIndex,
-          pieceType
+        coordinates: Piece.getLegalMovesByType(
+          row,
+          col,
+          this.game.state,
+          pieceType,
+          this.color,
+          true
         ),
         type: pieceType,
       }))
-      .filter(({ coordinates, type }) =>
-        coordinates.find((coordinate) => {
-          const piece = getPieceByCoordinates(this.game.state, coordinate);
-
-          if (!piece) return false;
-          return piece.color !== this.color && piece.type === type;
+      .map(({ coordinates, type }) =>
+        coordinates.map((coordinate) => ({
+          piece: getPieceByCoordinates(this.game.state, coordinate),
+          type,
+        }))
+      )
+      .filter((piecesWithType) =>
+        piecesWithType.find(({ piece, type }) => {
+          return !!piece && piece.color !== this.color && piece.type === type;
         })
-      );
-    const initialValue: {
-      coordinate: coordinates;
-      type: pieceTypes;
-    }[] = [];
-
-    const attackers: {
-      coordinate: coordinates;
-      type: pieceTypes;
-    }[] = possibleAttackers.reduce((acc, { coordinates, type }) => {
-      const attackingPieceCoordinates = coordinates.find((coordinate) =>
-        getPieceByCoordinates(this.game.state, coordinate)
-      );
-
-      if (!attackingPieceCoordinates) return acc;
-
-      return [...acc, { type, coordinate: attackingPieceCoordinates }];
-    }, initialValue);
+      )
+      .map((piecesWithType) => {
+        const pieceWithType = piecesWithType.find(
+          ({ piece, type }) => piece?.type === type
+        );
+        return pieceWithType?.piece as Piece;
+      });
 
     return attackers;
+  }
+
+  getPossibleKingAttacker(selectedPiece: Piece): Piece | null {
+    const gameState = this.game.state;
+    const kingDirection = getCoordinatesRelation(selectedPiece.coordinates, {
+      row: this.kingRowIndex,
+      col: this.kingColIndex,
+    });
+
+    if (!kingDirection) return null;
+
+    const closesPieceInKingDirection = getPieceByCoordinates(
+      gameState,
+      searchForPieceCoordinates(
+        gameState,
+        selectedPiece.coordinates.row,
+        selectedPiece.coordinates.col,
+        kingDirection
+      )
+    );
+
+    if (!closesPieceInKingDirection) return null;
+
+    const isKingBehind =
+      closesPieceInKingDirection.type === pieceTypes.king &&
+      closesPieceInKingDirection.color === this.color;
+
+    if (!isKingBehind) return null;
+
+    const closestPieceInOppositeDirection = getPieceByCoordinates(
+      gameState,
+      searchForPieceCoordinates(
+        gameState,
+        selectedPiece.coordinates.row,
+        selectedPiece.coordinates.col,
+        oppositeDirections[kingDirection]
+      )
+    );
+
+    if (
+      !closestPieceInOppositeDirection ||
+      closestPieceInOppositeDirection.color === this.color
+    )
+      return null;
+
+    const isAttacker =
+      closestPieceInOppositeDirection
+        ?.getAvailiableMovementDirections(true)
+        .directions.includes(kingDirection) &&
+      closestPieceInOppositeDirection.getAvailiableMovementDirections()
+        .movementType === MovementTypes.mulitpleSquares;
+
+    return isAttacker ? closestPieceInOppositeDirection : null;
   }
 }
 
@@ -214,6 +347,8 @@ class GameImpl implements Game {
     newRowIndex: number,
     newColIndex: number
   ): void {
+    //check the legal moves for all pieces of both the players
+    //if someone has no legal moves - if in check - mate, if not - draw
     this.state[newRowIndex][newColIndex].piece =
       this.state[prevRowIndex][prevColIndex].piece;
 
@@ -234,7 +369,7 @@ class GameImpl implements Game {
   }
 }
 
-class PieceImpl implements Piece {
+class Piece {
   color: colors;
   id: string;
   isTaken: boolean;
@@ -243,11 +378,9 @@ class PieceImpl implements Piece {
   imgUrl: string;
   isMoved: boolean;
 
-  constructor(
-    color: colors,
+  coordinates: coordinates;
 
-    type: pieceTypes
-  ) {
+  constructor(color: colors, type: pieceTypes, coordinates: coordinates) {
     this.id = uuidv4();
     this.isTaken = false;
 
@@ -256,10 +389,85 @@ class PieceImpl implements Piece {
     this.isMoved = false;
 
     this.imgUrl = createPieceImageUrl(type, color);
+
+    this.coordinates = coordinates;
   }
 
-  getAvailiableMovementDirections = (
-    type = this.type,
+  public static getLegalMovesByType(
+    row: number,
+    col: number,
+    gameState: Board,
+    type: pieceTypes,
+    color: colors,
+    isAttack = false
+  ): coordinates[] {
+    const availiableDirections =
+      this.getAvailiableMovementDirectionsByType(type);
+
+    const initialValue: coordinates[] = [];
+
+    return availiableDirections.directions.reduce((acc, direction) => {
+      let destinationSquare: coordinates | null;
+
+      switch (availiableDirections.movementType) {
+        case MovementTypes.steps:
+          destinationSquare = getCoordinatesByDirection(
+            row,
+            col,
+            direction,
+            availiableDirections.stepCount
+          );
+          break;
+
+        case MovementTypes.mulitpleSquares:
+          destinationSquare = searchForPieceCoordinates(
+            gameState,
+            row,
+            col,
+            direction
+          );
+          break;
+
+        case MovementTypes.singleSquare:
+          destinationSquare = getCoordinatesByPath(
+            row,
+            col,
+            directionToKnightPositionMapping[direction]
+          );
+          break;
+      }
+
+      const availiableCoordinates = getAvaiableSquare(
+        gameState,
+        destinationSquare,
+        direction,
+        color,
+        availiableDirections.movementType === MovementTypes.singleSquare,
+        isAttack
+      );
+
+      if (!availiableCoordinates) return acc;
+
+      let coordinatesArray: coordinates[] = [];
+
+      if (availiableDirections.movementType !== MovementTypes.singleSquare) {
+        coordinatesArray = getCoordinatesPathArray(
+          { row, col },
+
+          availiableCoordinates,
+          direction
+        );
+      } else {
+        coordinatesArray = [availiableCoordinates];
+      }
+
+      return [...acc, ...coordinatesArray];
+    }, initialValue);
+  }
+
+  public static getAvailiableMovementDirectionsByType = (
+    type: pieceTypes,
+    isMoved = false,
     isAttack = false
   ): AvailiableMovementDirections => {
     let availiableDirections: AvailiableMovementDirections;
@@ -270,7 +478,7 @@ class PieceImpl implements Piece {
           availiableDirections = {
             directions: [colors.white ? Directions.up : Directions.down],
             movementType: MovementTypes.steps,
-            stepCount: this.isMoved ? 1 : 2,
+            stepCount: isMoved ? 1 : 2,
           };
         } else {
           availiableDirections = {
@@ -357,7 +565,8 @@ class PieceImpl implements Piece {
             Directions.downLeft,
             Directions.downRight,
           ],
-          movementType: MovementTypes.singleSquare,
+          movementType: MovementTypes.steps,
+          stepCount: 1,
         };
         break;
     }
@@ -365,17 +574,123 @@ class PieceImpl implements Piece {
     return availiableDirections;
   };
 
-  //make this a static method
-  //get the selected piece by row and col
+  public getAvailiableMovementDirections = (
+    isAttack = false
+  ): AvailiableMovementDirections => {
+    let availiableDirections: AvailiableMovementDirections;
 
-  getLegalMoves(
-    row: number,
-    col: number,
-    gameState: Board,
-    isAttack = false,
-    type = this.type
-  ): coordinates[] {
-    const availiableDirections = this.getAvailiableMovementDirections(type);
+    switch (this.type) {
+      case pieceTypes.pawn:
+        if (!isAttack) {
+          availiableDirections = {
+            directions: [
+              this.color === colors.white ? Directions.up : Directions.down,
+            ],
+            movementType: MovementTypes.steps,
+            stepCount: this.isMoved ? 1 : 2,
+          };
+        } else {
+          availiableDirections = {
+            directions: [
+              this.color === colors.white
+                ? Directions.upLeft
+                : Directions.downLeft,
+              this.color === colors.white
+                ? Directions.upRight
+                : Directions.downRight,
+            ],
+            movementType: MovementTypes.steps,
+            stepCount: 1,
+          };
+        }
+
+        break;
+
+      case pieceTypes.rook:
+        availiableDirections = {
+          directions: [
+            Directions.down,
+            Directions.up,
+            Directions.left,
+            Directions.right,
+          ],
+          movementType: MovementTypes.mulitpleSquares,
+        };
+
+        break;
+
+      case pieceTypes.knight:
+        availiableDirections = {
+          directions: [
+            Directions.down,
+            Directions.up,
+            Directions.left,
+            Directions.right,
+            Directions.upLeft,
+            Directions.upRight,
+            Directions.downLeft,
+            Directions.downRight,
+          ],
+          movementType: MovementTypes.singleSquare,
+        };
+
+        break;
+
+      case pieceTypes.bishop:
+        availiableDirections = {
+          directions: [
+            Directions.upLeft,
+            Directions.upRight,
+            Directions.downLeft,
+            Directions.downRight,
+          ],
+          movementType: MovementTypes.mulitpleSquares,
+        };
+
+        break;
+
+      case pieceTypes.queen:
+        availiableDirections = {
+          directions: [
+            Directions.down,
+            Directions.up,
+            Directions.left,
+            Directions.right,
+            Directions.upLeft,
+            Directions.upRight,
+            Directions.downLeft,
+            Directions.downRight,
+          ],
+          movementType: MovementTypes.mulitpleSquares,
+        };
+
+        break;
+
+      case pieceTypes.king:
+        availiableDirections = {
+          directions: [
+            Directions.down,
+            Directions.up,
+            Directions.left,
+            Directions.right,
+            Directions.upLeft,
+            Directions.upRight,
+            Directions.downLeft,
+            Directions.downRight,
+          ],
+          movementType: MovementTypes.steps,
+          stepCount: 1,
+        };
+        break;
+    }
+
+    return availiableDirections;
+  };
+
+  public getLegalMoves(gameState: Board, isAttack = false): coordinates[] {
+    const { row, col } = this.coordinates;
+
+    const availiableDirections = this.getAvailiableMovementDirections();
 
     const initialValue: coordinates[] = [];
 
@@ -393,7 +708,12 @@ class PieceImpl implements Piece {
           break;
 
         case MovementTypes.mulitpleSquares:
-          destinationSquare = searchForPiece(gameState, row, col, direction);
+          destinationSquare = searchForPieceCoordinates(
+            gameState,
+            row,
+            col,
+            direction
+          );
           break;
 
         case MovementTypes.singleSquare:
@@ -421,8 +741,8 @@ class PieceImpl implements Piece {
       if (availiableDirections.movementType !== MovementTypes.singleSquare) {
         coordinatesArray = getCoordinatesPathArray(
           { row, col },
-          direction,
-          availiableCoordinates
+          availiableCoordinates,
+          direction
         );
       } else {
         coordinatesArray = [availiableCoordinates];
@@ -486,4 +806,4 @@ class CountdownTimer {
   }
 }
 
-export { CountdownTimer, BoardSquareImpl, GameImpl, PlayerImlp, PieceImpl };
+export { CountdownTimer, BoardSquareImpl, GameImpl, PlayerImlp, Piece };
