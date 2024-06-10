@@ -1,7 +1,7 @@
-import { BoardSquareImpl, Piece } from './classes';
+import { BoardSquare, Piece } from './classes';
+import { boardHeight } from './constants';
 import {
   Board,
-  BoardSquare,
   Directions,
   colors,
   coordinates,
@@ -139,10 +139,16 @@ const createInitialBoard = () => {
         ? colors.white
         : colors.black;
 
-      const currentSquare: BoardSquare = new BoardSquareImpl(
+      const currentSquare: BoardSquare = new BoardSquare(
         squareColor,
-        // currentPiece?.type !== pieceTypes.pawn ? currentPiece : null
+
         currentPiece
+
+        // currentPiece?.type !== pieceTypes.pawn ? currentPiece : null
+        // currentPiece?.type === pieceTypes.king ||
+        // currentPiece?.type === pieceTypes.rook
+        //   ? currentPiece
+        //   : null
       );
 
       //TODO: remove that, it is for dev testing
@@ -160,16 +166,20 @@ const createPiece = (rowIndex: number, colIndex: number) => {
   let currentPiece: Piece | null = null;
 
   let pieceColor =
-    rowIndex < 2 ? colors.white : rowIndex > 5 ? colors.black : null;
+    rowIndex < 2
+      ? colors.white
+      : rowIndex > boardHeight - 3
+      ? colors.black
+      : null;
 
-  if (rowIndex === 1 || rowIndex === 6) {
+  if (rowIndex === 1 || rowIndex === boardHeight - 2) {
     currentPiece = new Piece(pieceColor!, pieceTypes.pawn, {
       row: rowIndex,
       col: colIndex,
     });
   }
 
-  if (rowIndex === 0 || rowIndex === 7) {
+  if (rowIndex === 0 || rowIndex === boardHeight - 1) {
     currentPiece = new Piece(
       pieceColor!,
       columnIndexTopieceTypesToMapping[colIndex],
@@ -277,14 +287,17 @@ const getAvaiableSquare = (
   direction: Directions,
   color: colors,
   withoutPrevious = false,
-  onlyAttack = false
+  onlyAttack = false,
+  noAttack = false
 ): coordinates | null => {
   if (!coordinates) return null;
   const piece = getPieceByCoordinates(gameState, coordinates);
 
   if (!piece && onlyAttack) return null;
 
-  // if (piece && !onlyAttack) return null;
+  if (piece && noAttack) return null;
+
+  if (piece?.type === pieceTypes.king) return null;
 
   return piece?.color === color
     ? !withoutPrevious
@@ -327,10 +340,6 @@ const getCoordinatesByPath = (
   return { row, col };
 };
 
-// 1 - 1 : 0 - 2
-
-//3-0 : 7 - 4
-
 const getCoordinatesRelation = (
   startCoordinates: coordinates,
   endCoordinates: coordinates
@@ -356,6 +365,57 @@ const getCoordinatesRelation = (
   return rowDifference > 0 ? Directions.down : Directions.up;
 };
 
+const checkCoordinatesEquality = (
+  startCoordinates: coordinates,
+  endCoordinates: coordinates
+) => {
+  return (
+    startCoordinates.row === endCoordinates.row &&
+    startCoordinates.col === endCoordinates.col
+  );
+};
+
+const getSquareAttackers = (
+  row: number,
+  col: number,
+  color: colors,
+  gameState: Board
+): Piece[] => {
+  const attackingPieceTypes: pieceTypes[] = Object.values(pieceTypes);
+
+  const attackers: Piece[] = attackingPieceTypes
+    .map((pieceType) => ({
+      coordinates: Piece.getLegalMovesByType(
+        row,
+        col,
+        gameState,
+        pieceType,
+        color,
+        true
+      ),
+      type: pieceType,
+    }))
+    .map(({ coordinates, type }) =>
+      coordinates.map((coordinate) => ({
+        piece: getPieceByCoordinates(gameState, coordinate),
+        type,
+      }))
+    )
+    .filter((piecesWithType) =>
+      piecesWithType.find(({ piece, type }) => {
+        return !!piece && piece.color !== color && piece.type === type;
+      })
+    )
+    .map((piecesWithType) => {
+      const pieceWithType = piecesWithType.find(
+        ({ piece, type }) => piece?.type === type
+      );
+      return pieceWithType?.piece as Piece;
+    });
+
+  return attackers;
+};
+
 export {
   createInitialBoard,
   createPieceImageUrl,
@@ -373,4 +433,6 @@ export {
   directionToKnightPositionMapping,
   getCoordinatesRelation,
   oppositeDirections,
+  checkCoordinatesEquality,
+  getSquareAttackers,
 };

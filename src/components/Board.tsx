@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GameImpl, PlayerImlp } from '../classes';
+import { Game, Player } from '../classes';
 import { colors, coordinates } from '../interfaces';
 
 const colIndexToLetterMapping: { [key: number]: string } = {
@@ -13,11 +13,11 @@ const colIndexToLetterMapping: { [key: number]: string } = {
   0: 'a',
 };
 
-const newGame = new GameImpl();
+const newGame = new Game();
 
-const players: { [key in colors]: PlayerImlp } = {
-  [colors.white]: new PlayerImlp(newGame, colors.white),
-  [colors.black]: new PlayerImlp(newGame, colors.black),
+const players: { [key in colors]: Player } = {
+  [colors.white]: new Player(newGame, colors.white),
+  [colors.black]: new Player(newGame, colors.black),
 };
 
 newGame.addPlayers(players.white, players.black);
