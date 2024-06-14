@@ -43,6 +43,54 @@ enum colors {
 
 type Board = BoardSquare[][];
 
+enum playStateTypes {
+  'running' = 'running',
+  'drawOffer' = 'drawOffer',
+  'promotionMenu' = 'promotionMenu',
+  'pause' = 'pause',
+  'draw' = 'draw',
+  'winner' = 'winner',
+}
+
+enum winTypes {
+  'checkmate' = 'checkmate',
+  'zeitNot' = 'zeitNot',
+  'resignation' = 'resignation',
+}
+
+enum drawTypes {
+  'stalemate' = 'stalemate',
+  'agreement' = 'agreement',
+  'repetition' = 'repetition',
+  'fiftyMove' = 'fiftyMove',
+  'insufficientMaterial' = 'insufficientMaterial',
+}
+
+type playState =
+  | {
+      type: playStateTypes.draw | playStateTypes.winner;
+      subType: drawTypes | winTypes;
+    }
+  | {
+      type: playStateTypes.drawOffer;
+      initializedBy: colors;
+    }
+  | {
+      type:
+        | playStateTypes.running
+        | playStateTypes.pause
+        | playStateTypes.promotionMenu;
+    };
+
+enum pieceNotation {
+  'k' = 'k',
+  'q' = 'q',
+  'b' = 'b',
+  'n' = 'n',
+  'r' = 'r',
+  'p' = 'p',
+}
+
 export {
   colors,
   pieceTypes,
@@ -51,4 +99,9 @@ export {
   Directions,
   MovementTypes,
   AvailiableMovementDirections,
+  winTypes,
+  drawTypes,
+  playState,
+  playStateTypes,
+  pieceNotation,
 };

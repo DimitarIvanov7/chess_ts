@@ -1,17 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Game, Player } from '../classes';
 import { colors, coordinates } from '../interfaces';
-
-const colIndexToLetterMapping: { [key: number]: string } = {
-  7: 'h',
-  6: 'g',
-  5: 'f',
-  4: 'e',
-  3: 'd',
-  2: 'c',
-  1: 'b',
-  0: 'a',
-};
+import { colIndexToLetterMapping } from '../constants/pieces';
 
 const newGame = new Game();
 
@@ -25,15 +15,21 @@ newGame.addPlayers(players.white, players.black);
 const Board = () => {
   const [turnColor, setTurnColor] = useState<colors>(newGame.turn);
 
-  const [gameState, setGameState] = useState(newGame.state);
+  const [boardState, setBoardState] = useState(newGame.board);
 
   const [legalMoves, setLegalMoves] = useState<coordinates[]>([]);
 
   const [selectedPieceCoordinates, setselectedPieceCoordinates] =
     useState<coordinates | null>(null);
 
+  useEffect(() => {
+    newGame.startGame();
+  }, []);
+
+  console.log(newGame);
+
   const handleSelectPiece = (rowIndex: number, colIndex: number) => {
-    const clickedPiece = gameState[rowIndex][colIndex];
+    const clickedPiece = boardState[rowIndex][colIndex];
 
     if (clickedPiece?.piece?.color !== turnColor) return;
 
@@ -63,9 +59,9 @@ const Board = () => {
       colIndex
     );
 
-    const newState = newGame.state;
+    const newState = newGame.board;
 
-    setGameState(newState);
+    setBoardState(newState);
     setTurnColor((prevColor) =>
       prevColor === colors.white ? colors.black : colors.white
     );
@@ -74,7 +70,7 @@ const Board = () => {
   };
 
   const handleSquareClick = (rowIndex: number, colIndex: number) => {
-    const clickedPiece = gameState[rowIndex][colIndex].piece;
+    const clickedPiece = boardState[rowIndex][colIndex].piece;
 
     if (!clickedPiece) {
       if (selectedPieceCoordinates) handleMovePiece(rowIndex, colIndex);
@@ -97,7 +93,7 @@ const Board = () => {
         
         `}
     >
-      {gameState.map((squareRow, rowIndex) => (
+      {boardState.map((squareRow, rowIndex) => (
         <div className="flex " key={rowIndex}>
           {squareRow.map((square, colIndex) => {
             const isInLegalMoves = legalMoves.some(

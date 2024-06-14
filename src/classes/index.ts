@@ -5,26 +5,32 @@ import {
   MovementTypes,
   colors,
   coordinates,
+  drawTypes,
   pieceTypes,
+  playState,
+  playStateTypes,
+  winTypes,
 } from '../interfaces';
 import { v4 as uuidv4 } from 'uuid';
 import {
-  checkCoordinatesEquality,
+  calculateMoveCount,
   createInitialBoard,
   createPieceImageUrl,
-  directionToKnightPositionMapping,
   getAvaiableSquare,
   getCoordinatesByDirection,
   getCoordinatesByPath,
   getCoordinatesPathArray,
   getCoordinatesRelation,
   getPieceByCoordinates,
-  getPreviousCoordinates,
   getSquareAttackers,
+  moveToChessNotationMapping,
   oppositeDirections,
   searchForPieceCoordinates,
+  serializeBoard,
 } from '../utils';
-import { boardHeight, boardWidth } from '../constants';
+import { boardHeight, boardWidth, opostiteColorMapping } from '../constants';
+import { directionToKnightPositionMapping } from '../constants/directions';
+import { sufficientMaterialTypes } from '../constants/pieces';
 
 class BoardSquare {
   color: colors;
@@ -40,25 +46,27 @@ class Player {
   game: Game;
   id: string;
   color: colors;
-  isMated: boolean;
   isInCheck: boolean;
   kingRowIndex: number;
   kingColIndex: number;
   attackers: Piece[];
+  timer: CountdownTimer;
 
   constructor(game: Game, color: colors) {
     this.game = game;
     this.color = color;
     this.id = uuidv4();
-    this.isMated = false;
     this.isInCheck = false;
     this.kingRowIndex = color === colors.white ? 0 : boardHeight - 1;
     this.kingColIndex = 4;
     this.attackers = [];
+    this.timer = new CountdownTimer(120);
   }
 
   getLegalMoves(row: number, col: number): coordinates[] {
-    const selectedPiece = getPieceByCoordinates(this.game.state, {
+    if (this.game.playState.type !== playStateTypes.running) return [];
+
+    const selectedPiece = getPieceByCoordinates(this.game.board, {
       row,
       col,
     });
@@ -167,7 +175,7 @@ class Player {
           row,
           col,
           this.color,
-          this.game.state
+          this.game.board
         );
 
         return possibleAttackers.length === 0;
@@ -178,7 +186,9 @@ class Player {
   }
 
   selectPiece(rowIndex: number, colIndex: number): coordinates[] {
-    const clickedPiece = getPieceByCoordinates(this.game.state, {
+    if (this.game.playState.type !== playStateTypes.running) return [];
+
+    const clickedPiece = getPieceByCoordinates(this.game.board, {
       row: rowIndex,
       col: colIndex,
     });
@@ -194,7 +204,9 @@ class Player {
     rowIndex: number,
     colIndex: number
   ): void {
-    const selectedPiece = getPieceByCoordinates(this.game.state, {
+    if (this.game.playState.type !== playStateTypes.running) return;
+
+    const selectedPiece = getPieceByCoordinates(this.game.board, {
       row: prevRowIndex,
       col: prevColIndex,
     });
@@ -230,6 +242,9 @@ class Player {
       this.game.enPassantCoordinates?.col === colIndex &&
       this.game.enPassantCoordinates.row === rowIndex;
 
+    const isCastleShort = false;
+    const isCasteLong = false;
+
     this.game.updateGameState(
       prevRowIndex,
       prevColIndex,
@@ -247,7 +262,7 @@ class Player {
       this.kingRowIndex,
       this.kingColIndex,
       this.color,
-      this.game.state
+      this.game.board
     );
 
     if (attackers.length > 0) {
@@ -260,7 +275,7 @@ class Player {
   }
 
   getPossibleKingAttacker(selectedPiece: Piece): Piece | null {
-    const gameState = this.game.state;
+    const gameState = this.game.board;
     const kingDirection = getCoordinatesRelation(selectedPiece.coordinates, {
       row: this.kingRowIndex,
       col: this.kingColIndex,
@@ -311,35 +326,92 @@ class Player {
 
     return isAttacker ? closestPieceInOppositeDirection : null;
   }
+
+  findAllPieces(): Piece[] {
+    const initialValue: Piece[] = [];
+    const pieces = this.game.board.reduce((acc, currRow) => {
+      const rowPiecespieces = currRow
+        .filter((square) => square.piece?.color === this.color)
+        .map((square) => square.piece as Piece);
+      return [...acc, ...rowPiecespieces];
+    }, initialValue);
+
+    return pieces;
+  }
+
+  offerDraw(): void {
+    if (this.game.playState.type !== playStateTypes.running) return;
+
+    this.game.playState = {
+      type: playStateTypes.drawOffer,
+      initializedBy: this.color,
+    };
+  }
+
+  answerDrawOffer(accept: boolean): void {
+    if (this.game.playState.type !== playStateTypes.drawOffer) return;
+
+    if (accept)
+      this.game.playState = {
+        type: playStateTypes.draw,
+        subType: drawTypes.agreement,
+      };
+    else this.game.playState = { type: playStateTypes.running };
+  }
+
+  resign(): void {
+    if (this.game.playState.type !== playStateTypes.running) return;
+
+    this.game.stopGame(
+      { type: playStateTypes.winner, subType: winTypes.resignation },
+      opostiteColorMapping[this.color]
+    );
+  }
+
+  promote(pieceType: pieceTypes): void {
+    if (this.game.playState.type !== playStateTypes.promotionMenu) return;
+
+    const piece = this.game.promotionPiece;
+
+    if (!piece) return;
+
+    piece.promote(pieceType);
+
+    this.game.playState = { type: playStateTypes.running };
+    this.game.promotionPiece = null;
+  }
 }
 
 class Game {
   blackPlayer: Player | null;
   whitePlayer: Player | null;
-  isDraw: boolean;
-  moveCount: number;
-  running: boolean;
-  state: Board;
+  moveSequence: string[];
+  board: Board;
   previousGameStates: Board[];
-  winnerId: string | null;
-  timerWhite: CountdownTimer;
-  timerBlack: CountdownTimer;
+  winnerColor: colors | null;
+
   turn: colors;
   enPassantCoordinates: coordinates | null;
+  promotionPiece: Piece | null;
+
+  playState: playState;
+  lastPawnMove: number;
+  boardSeriliazations: string[];
 
   constructor() {
     this.blackPlayer = null;
     this.whitePlayer = null;
-    this.isDraw = false;
-    this.moveCount = 0;
-    this.running = false;
-    this.state = createInitialBoard();
+    this.moveSequence = [];
+    this.board = createInitialBoard();
     this.previousGameStates = [];
-    this.winnerId = null;
-    this.timerWhite = new CountdownTimer(120);
-    this.timerBlack = new CountdownTimer(120);
+    this.winnerColor = null;
+
     this.turn = colors.white;
     this.enPassantCoordinates = null;
+    this.promotionPiece = null;
+    this.playState = { type: playStateTypes.pause };
+    this.lastPawnMove = 0;
+    this.boardSeriliazations = [];
   }
 
   addPlayers(whitePlayer: Player, blackPlayer: Player): void {
@@ -360,23 +432,33 @@ class Game {
     isEnPassantMove: boolean,
     isEnPassantTake: boolean
   ): void {
-    this.turn === colors.white
-      ? (this.turn = colors.black)
-      : (this.turn = colors.white);
-    //check the legal moves for all pieces of both the players
-    //if someone has no legal moves - if in check - mate, if not - draw
+    if (this.turn === colors.white) {
+      this.whitePlayer?.timer.stop();
+      this.blackPlayer?.timer.start();
+    } else {
+      this.blackPlayer?.timer.stop();
+      this.whitePlayer?.timer.start();
+    }
 
-    const piece = this.state[prevRowIndex][prevColIndex].piece as Piece;
+    this.turn = opostiteColorMapping[this.turn];
 
-    this.state[newRowIndex][newColIndex].piece = piece;
+    let isTakeMove = false;
 
-    this.state[prevRowIndex][prevColIndex].piece = null;
+    const piece = this.board[prevRowIndex][prevColIndex].piece;
+
+    if (!piece) return;
+
+    if (this.board[newRowIndex][newColIndex].piece) isTakeMove = true;
+
+    this.board[newRowIndex][newColIndex].piece = piece;
+
+    this.board[prevRowIndex][prevColIndex].piece = null;
 
     if (isEnPassantTake && this.enPassantCoordinates) {
       const { row, col } = this.enPassantCoordinates;
 
       const enPassantRow = this.turn === colors.white ? row + 1 : row - 1;
-      this.state[enPassantRow][col].piece = null;
+      this.board[enPassantRow][col].piece = null;
     }
 
     if (isEnPassantMove) {
@@ -392,22 +474,24 @@ class Game {
       piece.type === pieceTypes.king &&
       Math.abs(newColIndex - prevColIndex) === 2;
 
+    let isCastleLong = false;
+
     if (isClastle) {
       const rookLeftCoordinates = searchForPieceCoordinates(
-        this.state,
+        this.board,
         newRowIndex,
         newColIndex,
         Directions.left
       );
 
       const rookRightCoordinates = searchForPieceCoordinates(
-        this.state,
+        this.board,
         newRowIndex,
         newColIndex,
         Directions.right
       );
 
-      const isCastleLong =
+      isCastleLong =
         Math.abs(newColIndex - rookLeftCoordinates.col) <
         Math.abs(newColIndex - rookRightCoordinates.col);
 
@@ -415,36 +499,184 @@ class Game {
         ? rookLeftCoordinates
         : rookRightCoordinates;
 
-      const rook = this.state[closerRookRow][closerRookCol].piece as Piece;
+      const rook = this.board[closerRookRow][closerRookCol].piece as Piece;
 
-      this.state[closerRookRow][closerRookCol].piece = null;
+      this.board[closerRookRow][closerRookCol].piece = null;
 
-      if (isCastleLong) this.state[newRowIndex][newColIndex + 1].piece = rook;
-      else this.state[newRowIndex][newColIndex - 1].piece = rook;
+      if (isCastleLong) {
+        this.board[newRowIndex][newColIndex + 1].piece = rook;
+
+        rook.coordinates = { row: newRowIndex, col: newColIndex + 1 };
+      } else {
+        this.board[newRowIndex][newColIndex - 1].piece = rook;
+        rook.coordinates = { row: newRowIndex, col: newColIndex - 1 };
+      }
     }
 
     const isPawnPromotion =
-      (piece.type === pieceTypes.pawn && newRowIndex === boardHeight - 1) ||
-      newRowIndex === 0;
+      piece.type === pieceTypes.pawn &&
+      (newRowIndex === boardHeight - 1 || newRowIndex === 0);
 
-    if (isPawnPromotion) piece.promote(pieceTypes.queen);
-
-    console.log(piece);
-
-    this.moveCount++;
+    if (isPawnPromotion) {
+      this.playState = { type: playStateTypes.promotionMenu };
+      this.promotionPiece = piece;
+    }
 
     this.notifyStateChange();
+
+    const isCheck = this.blackPlayer?.isInCheck || this.whitePlayer?.isInCheck;
+
+    this.moveSequence.push(
+      moveToChessNotationMapping(
+        { row: prevRowIndex, col: prevColIndex },
+        piece,
+        this.board,
+        isTakeMove || isEnPassantTake,
+        !!isCheck,
+        false,
+        isCastleLong,
+        isClastle && !isCastleLong,
+        isPawnPromotion
+      )
+    );
+
+    if (piece.type === pieceTypes.pawn)
+      this.lastPawnMove = this.moveSequence.length;
+
+    const seriliazation = serializeBoard(this);
+
+    isClastle || piece.type === pieceTypes.pawn || isTakeMove
+      ? (this.boardSeriliazations = [seriliazation])
+      : this.boardSeriliazations.push(seriliazation);
+
+    this.checkGameOver();
   }
 
   startGame(): void {
-    this.running = true;
-    this.timerWhite.start();
+    this.playState = { type: playStateTypes.running };
+    this.whitePlayer?.timer.start();
   }
 
-  stopGame(): void {
-    this.running = false;
-    this.timerWhite.stop();
-    this.timerBlack.stop();
+  stopGame(state: playState, winner?: colors): void {
+    this.playState = state;
+    this.whitePlayer?.timer.stop();
+    this.whitePlayer?.timer.stop();
+    this.winnerColor = winner ? winner : null;
+  }
+
+  checkGameOver(): void {
+    //no legal moves
+    const legalMovesWhiteCount =
+      this.whitePlayer && calculateMoveCount(this.whitePlayer);
+
+    if (legalMovesWhiteCount === 0) {
+      if (this.whitePlayer?.isInCheck) {
+        this.stopGame(
+          { type: playStateTypes.winner, subType: winTypes.checkmate },
+          colors.black
+        );
+      } else
+        this.stopGame({
+          type: playStateTypes.draw,
+          subType: drawTypes.stalemate,
+        });
+
+      return;
+    }
+
+    const legalMovesBlackCount =
+      this.blackPlayer && calculateMoveCount(this.blackPlayer);
+
+    if (legalMovesBlackCount === 0) {
+      if (this.blackPlayer?.isInCheck) {
+        this.stopGame(
+          { type: playStateTypes.winner, subType: winTypes.checkmate },
+          colors.white
+        );
+      } else
+        this.stopGame({
+          type: playStateTypes.draw,
+          subType: drawTypes.stalemate,
+        });
+
+      return;
+    }
+
+    //fifty move rule
+    const moveCount = this.moveSequence.length;
+
+    const fiftyMoveRule =
+      moveCount - this.lastPawnMove >= 50 &&
+      this.moveSequence.slice(-50).find((move) => move.includes('x'));
+
+    if (fiftyMoveRule) {
+      this.stopGame({
+        type: playStateTypes.draw,
+        subType: drawTypes.fiftyMove,
+      });
+      return;
+    }
+    //insufficient material
+    const whitePlayerPieces = this.whitePlayer?.findAllPieces() as Piece[];
+
+    const blackPlayerPieces = this.blackPlayer?.findAllPieces() as Piece[];
+
+    if (whitePlayerPieces?.length <= 3 && blackPlayerPieces?.length <= 3) {
+      if (
+        !whitePlayerPieces.some(
+          (piece) => piece.type in sufficientMaterialTypes
+        ) &&
+        !blackPlayerPieces.some(
+          (piece) => piece.type in sufficientMaterialTypes
+        )
+      ) {
+        this.stopGame({
+          type: playStateTypes.draw,
+          subType: drawTypes.insufficientMaterial,
+        });
+
+        return;
+      }
+    }
+
+    //repetition rule
+    if (
+      this.boardSeriliazations.length -
+        new Set(this.boardSeriliazations).size >=
+      3
+    ) {
+      this.stopGame({
+        type: playStateTypes.draw,
+        subType: drawTypes.repetition,
+      });
+
+      return;
+    }
+
+    //no time left
+    if (this.whitePlayer?.timer.currentTime === 0) {
+      this.stopGame(
+        {
+          type: playStateTypes.winner,
+          subType: winTypes.zeitNot,
+        },
+        colors.black
+      );
+
+      return;
+    }
+
+    if (this.blackPlayer?.timer.currentTime === 0) {
+      this.stopGame(
+        {
+          type: playStateTypes.winner,
+          subType: winTypes.zeitNot,
+        },
+        colors.white
+      );
+
+      return;
+    }
   }
 }
 
@@ -754,20 +986,11 @@ class Piece {
   public getLegalMoves(game: Game): coordinates[] {
     const { row, col } = this.coordinates;
 
-    const gameState = game.state;
+    const gameState = game.board;
 
     const availiableDirections = this.getAvailiableMovementDirections();
 
     const initialValue: coordinates[] = [];
-
-    //check castling - if the piece is king
-    //if no one squares of the castle ones are under attack
-    //--- that means 3 squares to the right of the king (short castle) and 3 squares to the left of the king (long castle)
-    //if the first  piece to left and/or to the right is rook and it is not moved and it is the same color
-    //move the king the 6th index - for short castle and the rook to the 5th index
-    //for long castle - move the king to the 2nd index square and the rook to the 3rd one
-
-    //in the update game, make both pieces moved and change their location
 
     const canCastleShort = this.checkCastle(gameState, false);
 
@@ -909,7 +1132,7 @@ class Piece {
 
 class CountdownTimer {
   private duration: number;
-  private currentTime: number;
+  public currentTime: number;
   private intervalId: number | null;
 
   constructor(duration: number) {

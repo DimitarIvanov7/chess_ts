@@ -1,120 +1,30 @@
-import { BoardSquare, Piece } from './classes';
-import { boardHeight } from './constants';
+import { BoardSquare, Game, Piece, Player } from './classes';
+import { boardHeight, opostiteColorMapping } from './constants';
+import {
+  columnIndexTopieceTypesToMapping,
+  directionToSearchFunctionMapping,
+  oppositeDirections,
+} from './constants/directions';
+import {
+  colIndexToLetterMapping,
+  colorToImageUrlMapping,
+  lettertoColIndexMapping,
+  notationToPieceMapping,
+  piecesToNotationMapping,
+} from './constants/pieces';
 import {
   Board,
   Directions,
   colors,
   coordinates,
+  pieceNotation,
   pieceTypes,
 } from './interfaces';
-
-const oppositeDirections: {
-  [key in Directions]: Directions;
-} = {
-  [Directions.down]: Directions.up,
-  [Directions.up]: Directions.down,
-  [Directions.left]: Directions.right,
-  [Directions.right]: Directions.left,
-  [Directions.upRight]: Directions.downLeft,
-  [Directions.upLeft]: Directions.downRight,
-  [Directions.downRight]: Directions.upLeft,
-  [Directions.downLeft]: Directions.upRight,
-};
-
-const directionToSearchFunctionMapping: {
-  [key in Directions]: (coordinates: coordinates) => coordinates;
-} = {
-  [Directions.down]: (coordinates) => ({
-    ...coordinates,
-    row: coordinates.row - 1,
-  }),
-  [Directions.downRight]: (coordinates) => ({
-    col: coordinates.col + 1,
-    row: coordinates.row + 1,
-  }),
-
-  [Directions.downLeft]: (coordinates) => ({
-    col: coordinates.col - 1,
-    row: coordinates.row + 1,
-  }),
-
-  [Directions.left]: (coordinates) => ({
-    ...coordinates,
-    col: coordinates.col - 1,
-  }),
-
-  [Directions.right]: (coordinates) => ({
-    ...coordinates,
-    col: coordinates.col + 1,
-  }),
-
-  [Directions.up]: (coordinates) => ({
-    ...coordinates,
-    row: coordinates.row + 1,
-  }),
-  [Directions.upLeft]: (coordinates) => ({
-    col: coordinates.col - 1,
-    row: coordinates.row - 1,
-  }),
-
-  [Directions.upRight]: (coordinates) => ({
-    col: coordinates.col + 1,
-    row: coordinates.row - 1,
-  }),
-};
-
-const columnIndexTopieceTypesToMapping: { [key: number]: pieceTypes } = {
-  0: pieceTypes.rook,
-  1: pieceTypes.knight,
-  2: pieceTypes.bishop,
-  3: pieceTypes.queen,
-  4: pieceTypes.king,
-  5: pieceTypes.bishop,
-  6: pieceTypes.knight,
-  7: pieceTypes.rook,
-};
-
-const directionToKnightPositionMapping: { [key in Directions]: Directions[] } =
-  {
-    [Directions.down]: [Directions.down, Directions.left, Directions.left],
-
-    [Directions.up]: [Directions.up, Directions.left, Directions.left],
-
-    [Directions.left]: [Directions.left, Directions.down, Directions.down],
-
-    [Directions.right]: [Directions.right, Directions.down, Directions.down],
-
-    [Directions.downRight]: [
-      Directions.down,
-      Directions.right,
-      Directions.right,
-    ],
-
-    [Directions.downLeft]: [Directions.left, Directions.up, Directions.up],
-
-    [Directions.upRight]: [Directions.up, Directions.right, Directions.right],
-
-    [Directions.upLeft]: [Directions.right, Directions.up, Directions.up],
-  };
-
-const pieceToImageUrlMapping: { [key in pieceTypes]: string } = {
-  [pieceTypes.king]: 'k',
-  [pieceTypes.queen]: 'q',
-  [pieceTypes.bishop]: 'b',
-  [pieceTypes.knight]: 'n',
-  [pieceTypes.rook]: 'r',
-  [pieceTypes.pawn]: 'p',
-};
-
-const colorToImageUrlMapping: { [key in colors]: string } = {
-  [colors.white]: 'l',
-  [colors.black]: 'd',
-};
 
 const createPieceImageUrl = (piece: pieceTypes, color: colors) => {
   return (
     '/images/' +
-    pieceToImageUrlMapping[piece] +
+    piecesToNotationMapping[piece] +
     colorToImageUrlMapping[color] +
     't60.png'
   );
@@ -145,10 +55,6 @@ const createInitialBoard = () => {
         currentPiece
 
         // currentPiece?.type !== pieceTypes.pawn ? currentPiece : null
-        // currentPiece?.type === pieceTypes.king ||
-        // currentPiece?.type === pieceTypes.rook
-        //   ? currentPiece
-        //   : null
       );
 
       //TODO: remove that, it is for dev testing
@@ -293,11 +199,14 @@ const getAvaiableSquare = (
   if (!coordinates) return null;
   const piece = getPieceByCoordinates(gameState, coordinates);
 
-  if (!piece && onlyAttack) return null;
-
-  if (piece && noAttack) return null;
-
-  if (piece?.type === pieceTypes.king) return null;
+  if (
+    (!piece && onlyAttack) ||
+    (piece && noAttack) ||
+    piece?.type === pieceTypes.king
+  )
+    return !withoutPrevious
+      ? getPreviousCoordinates(coordinates, direction)
+      : null;
 
   return piece?.color === color
     ? !withoutPrevious
@@ -416,6 +325,257 @@ const getSquareAttackers = (
   return attackers;
 };
 
+const calculateMoveCount = (player: Player): number => {
+  return player
+    ?.findAllPieces()
+    .map(({ coordinates }) =>
+      player?.getLegalMoves(coordinates.row, coordinates.col)
+    )
+    .reduce((acc, curr) => (curr ? acc + curr?.length : acc), 0);
+};
+
+const moveToChessNotationMapping = (
+  { row: oldRow, col: oldCol }: coordinates,
+  piece: Piece,
+  gameState: Board,
+  takes: boolean,
+  isCheck: boolean,
+  isMate: boolean,
+  isLongCastle: boolean,
+  isShortCastle: boolean,
+  isPromotion: boolean
+) => {
+  if (isLongCastle) return 'O-O-O';
+
+  if (isShortCastle) return 'O-O';
+
+  if (isPromotion) {
+    const { row, col } = piece.coordinates;
+    return `${piecesToNotationMapping[piece.type]}${
+      colIndexToLetterMapping[col]
+    }${row - 1}`;
+  }
+
+  let result = '';
+
+  if (isCheck) result += '+';
+  else if (isMate) result += '#';
+
+  if (!piece) return '';
+
+  const pieceTypeNotation =
+    piece.type !== pieceTypes.pawn
+      ? piecesToNotationMapping[piece.type]
+      : takes
+      ? colIndexToLetterMapping[oldCol]
+      : '';
+
+  result += pieceTypeNotation;
+
+  const { row: newRow, col: newCol } = piece.coordinates;
+
+  const squareAttackersOfSameType = getSquareAttackers(
+    newRow,
+    newCol,
+    opostiteColorMapping[piece.color],
+    gameState
+  ).filter((attacker) => attacker.type === piece.type);
+
+  if (squareAttackersOfSameType.length && piece.type !== pieceTypes.pawn) {
+    const sameCol = squareAttackersOfSameType.some(
+      (piece) => piece.coordinates.col === oldCol
+    );
+
+    const sameRow = squareAttackersOfSameType.some(
+      (piece) => piece.coordinates.row === oldRow
+    );
+    if (sameRow || (!sameCol && !sameRow))
+      result += colIndexToLetterMapping[oldCol];
+
+    if (sameCol) result += `${oldRow + 1}`;
+  }
+
+  if (takes) result += 'x';
+
+  const destinationColLetter = colIndexToLetterMapping[newCol];
+
+  const destinationRowNumber = newRow + 1;
+
+  result += `${destinationColLetter}${destinationRowNumber}`;
+
+  return result;
+};
+
+const chessNotationSequenceToMovesMapping = (moves: string[]): Board => {
+  const newGame = new Game();
+
+  const players: { [key in colors]: Player } = {
+    [colors.white]: new Player(newGame, colors.white),
+    [colors.black]: new Player(newGame, colors.black),
+  };
+
+  newGame.addPlayers(players.white, players.black);
+
+  moves.forEach((currentMove, index) => {
+    const turnColor = index % 2 === 0 ? colors.white : colors.black;
+    const currentMoveLength = currentMove.length;
+
+    if (currentMove.includes('O-O')) {
+      const isLongCastle = currentMoveLength > 3;
+
+      const kingCol = players[turnColor].kingColIndex;
+
+      const kingRow = players[turnColor].kingRowIndex;
+
+      const newCol = isLongCastle ? kingCol - 2 : kingCol + 2;
+
+      players[turnColor].move(kingRow, kingCol, kingRow, newCol);
+
+      return;
+    }
+
+    const isCheckmate = currentMove[currentMoveLength - 1] === '#';
+
+    const isPawnPromotion = !isCharNumber(currentMove[currentMoveLength - 1]);
+
+    if (isPawnPromotion) {
+      const destinationColIndex = lettertoColIndexMapping[currentMove[0]];
+
+      const startColIndex = lettertoColIndexMapping[currentMove[0]];
+
+      const destinationRowIndex = +currentMove[1] - 1;
+
+      const startRowIndex =
+        turnColor === colors.white
+          ? destinationRowIndex - 1
+          : destinationRowIndex + 1;
+
+      players[turnColor].move(
+        startRowIndex,
+        startColIndex,
+        destinationRowIndex,
+        destinationColIndex
+      );
+
+      return;
+    }
+
+    const isTake = currentMove.includes('x');
+
+    const endOfDestinationIndex = !isCheckmate
+      ? currentMoveLength - 1
+      : currentMoveLength - 2;
+
+    const destinationRowIndex = +currentMove[endOfDestinationIndex] - 1;
+
+    const destinationColIndex =
+      lettertoColIndexMapping[currentMove[endOfDestinationIndex - 1]];
+
+    const pieceType =
+      currentMove[0] in pieceNotation
+        ? notationToPieceMapping[currentMove[0] as pieceNotation]
+        : pieceTypes.pawn;
+
+    let disambiguationColumn: undefined | number;
+
+    let disambiguationRow: undefined | number;
+
+    if (pieceType === pieceTypes.pawn) {
+      if (isTake)
+        disambiguationColumn = lettertoColIndexMapping[currentMove[0]];
+    } else {
+      const fistDisambiguationIndex = currentMove
+        .split('')
+        .findIndex(
+          (letter, index) =>
+            index < endOfDestinationIndex - 1 &&
+            index > 0 &&
+            letter !== 'x' &&
+            letter !== '+'
+        );
+
+      if (isCharNumber(currentMove[fistDisambiguationIndex]))
+        disambiguationRow = +currentMove[fistDisambiguationIndex] - 1;
+      else
+        disambiguationColumn =
+          lettertoColIndexMapping[currentMove[fistDisambiguationIndex]];
+    }
+
+    const possiblePieces = getSquareAttackers(
+      destinationRowIndex,
+      destinationColIndex,
+      turnColor,
+      newGame.board
+    ).filter((piece) => piece.type === pieceType);
+
+    const piece = (
+      possiblePieces.length > 1
+        ? possiblePieces.find((piece) => {
+            const { row, col } = piece.coordinates;
+
+            const hasRow = disambiguationRow !== undefined;
+
+            const hasCol = disambiguationColumn !== undefined;
+
+            if (!hasCol && !hasRow) return true;
+
+            if (hasRow && hasCol)
+              return row === disambiguationRow && col === disambiguationColumn;
+
+            if (hasRow) return row === disambiguationRow;
+            else return col === disambiguationColumn;
+          })
+        : possiblePieces[1]
+    ) as Piece;
+
+    players[turnColor].move(
+      piece.coordinates.row,
+      piece.coordinates.col,
+      destinationRowIndex,
+      destinationColIndex
+    );
+  });
+
+  return newGame.board;
+};
+
+const isCharNumber = (c: string) => {
+  return c.length === 1 && c >= '0' && c <= '9';
+};
+
+const serializeBoard = (game: Game): string => {
+  let castle = '';
+  const enpassandCoordinates = game.enPassantCoordinates?.row
+    ? `|-enpassant-${game.enPassantCoordinates.row}-${game.enPassantCoordinates.col}`
+    : '';
+
+  return (
+    game.board.reduce((acc, currentRow, rowIndex) => {
+      return (
+        acc +
+        currentRow.reduce((accumulator, currentSquare) => {
+          const piece = currentSquare.piece;
+
+          if (!piece) return accumulator + (rowIndex === 0 ? '' : '-') + '|';
+
+          let result =
+            piece.color[0] + '-' + piecesToNotationMapping[piece.type];
+
+          if (piece.checkCastle(game.board, true))
+            castle += '-' + piece.color[0] + '-' + 'castle-long-|';
+
+          if (piece.checkCastle(game.board, false))
+            castle += '-' + piece.color[0] + '-' + 'castle-short-|';
+
+          return accumulator + result + '|';
+        }, '')
+      );
+    }, '') +
+    castle +
+    enpassandCoordinates
+  );
+};
+
 export {
   createInitialBoard,
   createPieceImageUrl,
@@ -430,9 +590,12 @@ export {
   getCoordinatesByDirection,
   getSquareByCoordinates,
   getCoordinatesByPath,
-  directionToKnightPositionMapping,
   getCoordinatesRelation,
   oppositeDirections,
   checkCoordinatesEquality,
   getSquareAttackers,
+  calculateMoveCount,
+  moveToChessNotationMapping,
+  chessNotationSequenceToMovesMapping,
+  serializeBoard,
 };
